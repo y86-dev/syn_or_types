@@ -1210,6 +1210,7 @@ where
         Expr::Yield(_binding_0) => {
             full!(v.visit_expr_yield_mut(_binding_0));
         }
+        #[cfg(syn_no_non_exhaustive)]
         _ => unreachable!(),
     }
 }
@@ -1898,6 +1899,7 @@ where
         ForeignItem::Verbatim(_binding_0) => {
             skip!(_binding_0);
         }
+        #[cfg(syn_no_non_exhaustive)]
         _ => unreachable!(),
     }
 }
@@ -2062,6 +2064,7 @@ where
         ImplItem::Verbatim(_binding_0) => {
             skip!(_binding_0);
         }
+        #[cfg(syn_no_non_exhaustive)]
         _ => unreachable!(),
     }
 }
@@ -2197,6 +2200,7 @@ where
         Item::Verbatim(_binding_0) => {
             skip!(_binding_0);
         }
+        #[cfg(syn_no_non_exhaustive)]
         _ => unreachable!(),
     }
 }
@@ -2801,6 +2805,7 @@ where
         Pat::Wild(_binding_0) => {
             v.visit_pat_wild_mut(_binding_0);
         }
+        #[cfg(syn_no_non_exhaustive)]
         _ => unreachable!(),
     }
 }
@@ -3257,6 +3262,7 @@ where
         TraitItem::Verbatim(_binding_0) => {
             skip!(_binding_0);
         }
+        #[cfg(syn_no_non_exhaustive)]
         _ => unreachable!(),
     }
 }
@@ -3385,6 +3391,7 @@ where
         Type::Verbatim(_binding_0) => {
             skip!(_binding_0);
         }
+        #[cfg(syn_no_non_exhaustive)]
         _ => unreachable!(),
     }
 }

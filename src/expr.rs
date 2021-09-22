@@ -87,6 +87,7 @@ ast_enum_of_structs! {
     /// see names getting repeated in your code, like accessing
     /// `receiver.receiver` or `pat.pat` or `cond.cond`.
     #[cfg_attr(doc_cfg, doc(cfg(any(feature = "full", feature = "derive"))))]
+    #[cfg_attr(not(syn_no_non_exhaustive), non_exhaustive)]
     pub enum Expr {
         /// A slice literal expression: `[a, b, c, d]`.
         Array(ExprArray),
@@ -224,31 +225,11 @@ ast_enum_of_structs! {
         /// A yield expression: `yield expr`.
         Yield(ExprYield),
 
-        // The following is the only supported idiom for exhaustive matching of
-        // this enum.
-        //
-        //     match expr {
-        //         Expr::Array(e) => {...}
-        //         Expr::Assign(e) => {...}
-        //         ...
-        //         Expr::Yield(e) => {...}
-        //
-        //         #[cfg(test)]
-        //         Expr::__TestExhaustive(_) => unimplemented!(),
-        //         #[cfg(not(test))]
-        //         _ => { /* some sane fallback */ }
-        //     }
-        //
-        // This way we fail your tests but don't break your library when adding
-        // a variant. You will be notified by a test failure when a variant is
-        // added, so that you can add code to handle it, but your library will
-        // continue to compile and work for downstream users in the interim.
-        //
-        // Once `deny(reachable)` is available in rustc, Expr will be
-        // reimplemented as a non_exhaustive enum.
-        // https://github.com/rust-lang/rust/issues/44109#issuecomment-521781237
+        // Not public API.
+        // Use #[deny(non_exhaustive_omitted_patterns)] for testing exhaustiveness.
+        #[cfg(syn_no_non_exhaustive)]
         #[doc(hidden)]
-        __TestExhaustive(crate::private),
+        __NonExhaustive,
     }
 }
 
@@ -828,9 +809,7 @@ impl Expr {
             | Expr::Yield(ExprYield { attrs, .. }) => mem::replace(attrs, new),
             Expr::Verbatim(_) => Vec::new(),
 
-            #[cfg(test)]
-            Expr::__TestExhaustive(_) => unimplemented!(),
-            #[cfg(not(test))]
+            #[cfg(syn_no_non_exhaustive)]
             _ => unreachable!(),
         }
     }
@@ -2495,9 +2474,7 @@ pub(crate) mod parsing {
                 Pat::Verbatim(_) => {}
                 Pat::Wild(pat) => pat.attrs = attrs,
 
-                #[cfg(test)]
-                Pat::__TestExhaustive(_) => unimplemented!(),
-                #[cfg(not(test))]
+                #[cfg(syn_no_non_exhaustive)]
                 _ => unreachable!(),
             }
             Ok(pat)
@@ -2869,7 +2846,8 @@ pub(crate) mod parsing {
         }
         for part in float_repr.split('.') {
             let index = crate::parse_str(part).map_err(|err| Error::new(float.span(), err))?;
-            let base = mem::replace(e, Expr::__TestExhaustive(crate::private(())));
+            let meaningless_placeholder = Expr::Verbatim(TokenStream::new());
+            let base = mem::replace(e, meaningless_placeholder);
             *e = Expr::Field(ExprField {
                 attrs: Vec::new(),
                 base: Box::new(base),

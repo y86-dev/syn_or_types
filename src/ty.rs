@@ -14,6 +14,7 @@ ast_enum_of_structs! {
     ///
     /// [syntax tree enum]: Expr#syntax-tree-enums
     #[cfg_attr(doc_cfg, doc(cfg(any(feature = "full", feature = "derive"))))]
+    #[cfg_attr(not(syn_no_non_exhaustive), non_exhaustive)]
     pub enum Type {
         /// A fixed size array type: `[T; n]`.
         Array(TypeArray),
@@ -63,31 +64,11 @@ ast_enum_of_structs! {
         /// Tokens in type position not interpreted by Syn.
         Verbatim(TokenStream),
 
-        // The following is the only supported idiom for exhaustive matching of
-        // this enum.
-        //
-        //     match expr {
-        //         Type::Array(e) => {...}
-        //         Type::BareFn(e) => {...}
-        //         ...
-        //         Type::Verbatim(e) => {...}
-        //
-        //         #[cfg(test)]
-        //         Type::__TestExhaustive(_) => unimplemented!(),
-        //         #[cfg(not(test))]
-        //         _ => { /* some sane fallback */ }
-        //     }
-        //
-        // This way we fail your tests but don't break your library when adding
-        // a variant. You will be notified by a test failure when a variant is
-        // added, so that you can add code to handle it, but your library will
-        // continue to compile and work for downstream users in the interim.
-        //
-        // Once `deny(reachable)` is available in rustc, Type will be
-        // reimplemented as a non_exhaustive enum.
-        // https://github.com/rust-lang/rust/issues/44109#issuecomment-521781237
+        // Not public API.
+        // Use #[deny(non_exhaustive_omitted_patterns)] for testing exhaustiveness.
+        #[cfg(syn_no_non_exhaustive)]
         #[doc(hidden)]
-        __TestExhaustive(crate::private),
+        __NonExhaustive,
     }
 }
 
