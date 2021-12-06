@@ -1,5 +1,6 @@
 use super::*;
 use crate::punctuated::Punctuated;
+use crate::ty::OrType;
 use proc_macro2::TokenStream;
 
 ast_enum_of_structs! {
@@ -281,6 +282,19 @@ ast_struct! {
         pub pat: Box<Pat>,
         pub colon_token: Token![:],
         pub ty: Box<Type>,
+    }
+}
+
+ast_struct! {
+    /// A type ascription pattern with OrType: `foo: f64 | f32`.
+    ///
+    /// *This type is available only if Syn is built with the `"full"` feature.*
+    #[cfg_attr(doc_cfg, doc(cfg(feature = "full")))]
+    pub struct PatTypeOr {
+        pub attrs: Vec<Attribute>,
+        pub pat: Box<Pat>,
+        pub colon_token: Token![:],
+        pub ty: Box<OrType>,
     }
 }
 
@@ -815,6 +829,16 @@ mod printing {
 
     #[cfg_attr(doc_cfg, doc(cfg(feature = "printing")))]
     impl ToTokens for PatType {
+        fn to_tokens(&self, tokens: &mut TokenStream) {
+            tokens.append_all(self.attrs.outer());
+            self.pat.to_tokens(tokens);
+            self.colon_token.to_tokens(tokens);
+            self.ty.to_tokens(tokens);
+        }
+    }
+
+    #[cfg_attr(doc_cfg, doc(cfg(feature = "printing")))]
+    impl ToTokens for PatTypeOr {
         fn to_tokens(&self, tokens: &mut TokenStream) {
             tokens.append_all(self.attrs.outer());
             self.pat.to_tokens(tokens);

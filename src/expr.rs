@@ -2,6 +2,7 @@ use super::*;
 use crate::punctuated::Punctuated;
 #[cfg(feature = "full")]
 use crate::reserved::Reserved;
+use crate::ty::OrType;
 use proc_macro2::{Span, TokenStream};
 #[cfg(feature = "printing")]
 use quote::IdentFragment;
@@ -166,6 +167,9 @@ ast_enum_of_structs! {
 
         /// A `match` expression: `match n { Some(n) => {}, None => {} }`.
         Match(ExprMatch),
+
+        /// A `match type` expression: `match type s { String => {}, &str => {} }`
+        MatchType(ExprMatchType),
 
         /// A method call expression: `x.foo::<T>(a, b)`.
         MethodCall(ExprMethodCall),
@@ -569,6 +573,21 @@ ast_struct! {
 }
 
 ast_struct! {
+    /// A `match` expression: `match n { Some(n) => {}, None => {} }`.
+    ///
+    /// *This type is available only if Syn is built with the `"full"` feature.*
+    #[cfg_attr(doc_cfg, doc(cfg(feature = "full")))]
+    pub struct ExprMatchType #full {
+        pub attrs: Vec<Attribute>,
+        pub match_token: Token![match],
+        pub type_token: Token![type],
+        pub ident: Box<Ident>,
+        pub brace_token: token::Brace,
+        pub arms: Vec<TypeArm>,
+    }
+}
+
+ast_struct! {
     /// A method call expression: `x.foo::<T>(a, b)`.
     ///
     /// *This type is available only if Syn is built with the `"full"` feature.*
@@ -803,6 +822,7 @@ impl Expr {
             | Expr::ForLoop(ExprForLoop { attrs, .. })
             | Expr::Loop(ExprLoop { attrs, .. })
             | Expr::Match(ExprMatch { attrs, .. })
+            | Expr::MatchType(ExprMatchType { attrs, .. })
             | Expr::Closure(ExprClosure { attrs, .. })
             | Expr::Unsafe(ExprUnsafe { attrs, .. })
             | Expr::Block(ExprBlock { attrs, .. })
@@ -1046,6 +1066,37 @@ ast_struct! {
         pub attrs: Vec<Attribute>,
         pub pat: Pat,
         pub guard: Option<(Token![if], Box<Expr>)>,
+        pub fat_arrow_token: Token![=>],
+        pub body: Box<Expr>,
+        pub comma: Option<Token![,]>,
+    }
+}
+
+#[cfg(feature = "full")]
+ast_struct! {
+    /// One arm of a `match type` expression: `String => { return true; }`.
+    ///
+    /// As in:
+    ///
+    /// ```
+    /// # fn f() -> bool {
+    /// #     let n = 0;
+    /// match type n {
+    ///     String => {
+    ///         return true;
+    ///     }
+    ///     // ...
+    ///     # _ => {}
+    /// }
+    /// #   false
+    /// # }
+    /// ```
+    ///
+    /// *This type is available only if Syn is built with the `"full"` feature.*
+    #[cfg_attr(doc_cfg, doc(cfg(feature = "full")))]
+    pub struct TypeArm {
+        pub attrs: Vec<Attribute>,
+        pub typ: OrType,
         pub fat_arrow_token: Token![=>],
         pub body: Box<Expr>,
         pub comma: Option<Token![,]>,
@@ -1761,7 +1812,11 @@ pub(crate) mod parsing {
         } else if input.peek(Token![loop]) {
             input.parse().map(Expr::Loop)
         } else if input.peek(Token![match]) {
-            input.parse().map(Expr::Match)
+            if input.peek2(Token![type]) {
+                input.parse().map(Expr::MatchType)
+            } else {
+                input.parse().map(Expr::Match)
+            }
         } else if input.peek(Token![yield]) {
             input.parse().map(Expr::Yield)
         } else if input.peek(Token![unsafe]) {
@@ -2017,7 +2072,11 @@ pub(crate) mod parsing {
         } else if input.peek(Token![loop]) {
             Expr::Loop(input.parse()?)
         } else if input.peek(Token![match]) {
-            Expr::Match(input.parse()?)
+            if input.peek2(Token![type]) {
+                Expr::MatchType(input.parse()?)
+            } else {
+                Expr::Match(input.parse()?)
+            }
         } else if input.peek(Token![try]) && input.peek2(token::Brace) {
             Expr::TryBlock(input.parse()?)
         } else if input.peek(Token![unsafe]) {
@@ -2231,6 +2290,35 @@ pub(crate) mod parsing {
                 attrs,
                 match_token,
                 expr: Box::new(expr),
+                brace_token,
+                arms,
+            })
+        }
+    }
+
+    #[cfg(feature = "full")]
+    #[cfg_attr(doc_cfg, doc(cfg(feature = "parsing")))]
+    impl Parse for ExprMatchType {
+        fn parse(input: ParseStream) -> Result<Self> {
+            let mut attrs = input.call(Attribute::parse_outer)?;
+            let match_token: Token![match] = input.parse()?;
+            let type_token: Token![type] = input.parse()?;
+            let ident = input.parse()?;
+
+            let content;
+            let brace_token = braced!(content in input);
+            attr::parsing::parse_inner(&content, &mut attrs)?;
+
+            let mut arms = Vec::new();
+            while !content.is_empty() {
+                arms.push(content.call(TypeArm::parse)?);
+            }
+
+            Ok(ExprMatchType {
+                attrs,
+                match_token,
+                type_token,
+                ident,
                 brace_token,
                 arms,
             })
@@ -2843,6 +2931,31 @@ pub(crate) mod parsing {
         }
     }
 
+    #[cfg(feature = "full")]
+    #[cfg_attr(doc_cfg, doc(cfg(feature = "parsing")))]
+    impl Parse for TypeArm {
+        fn parse(input: ParseStream) -> Result<TypeArm> {
+            let requires_comma;
+            Ok(TypeArm {
+                attrs: input.call(Attribute::parse_outer)?,
+                typ: OrType::parse(input)?,
+                fat_arrow_token: input.parse()?,
+                body: {
+                    let body = input.call(expr_early)?;
+                    requires_comma = requires_terminator(&body);
+                    Box::new(body)
+                },
+                comma: {
+                    if requires_comma && !input.is_empty() {
+                        Some(input.parse()?)
+                    } else {
+                        input.parse()?
+                    }
+                },
+            })
+        }
+    }
+
     #[cfg_attr(doc_cfg, doc(cfg(feature = "parsing")))]
     impl Parse for Index {
         fn parse(input: ParseStream) -> Result<Self> {
@@ -3178,6 +3291,29 @@ pub(crate) mod printing {
 
     #[cfg(feature = "full")]
     #[cfg_attr(doc_cfg, doc(cfg(feature = "printing")))]
+    impl ToTokens for ExprMatchType {
+        fn to_tokens(&self, tokens: &mut TokenStream) {
+            outer_attrs_to_tokens(&self.attrs, tokens);
+            self.match_token.to_tokens(tokens);
+            self.type_token.to_tokens(tokens);
+            self.ident.to_tokens(tokens);
+            self.brace_token.surround(tokens, |tokens| {
+                inner_attrs_to_tokens(&self.attrs, tokens);
+                for (i, arm) in self.arms.iter().enumerate() {
+                    arm.to_tokens(tokens);
+                    // Ensure that we have a comma after a non-block arm, except
+                    // for the last one.
+                    let is_last = i == self.arms.len() - 1;
+                    if !is_last && requires_terminator(&arm.body) && arm.comma.is_none() {
+                        <Token![,]>::default().to_tokens(tokens);
+                    }
+                }
+            });
+        }
+    }
+
+    #[cfg(feature = "full")]
+    #[cfg_attr(doc_cfg, doc(cfg(feature = "printing")))]
     impl ToTokens for ExprAsync {
         fn to_tokens(&self, tokens: &mut TokenStream) {
             outer_attrs_to_tokens(&self.attrs, tokens);
@@ -3492,6 +3628,18 @@ pub(crate) mod printing {
                 if_token.to_tokens(tokens);
                 guard.to_tokens(tokens);
             }
+            self.fat_arrow_token.to_tokens(tokens);
+            self.body.to_tokens(tokens);
+            self.comma.to_tokens(tokens);
+        }
+    }
+
+    #[cfg(feature = "full")]
+    #[cfg_attr(doc_cfg, doc(cfg(feature = "printing")))]
+    impl ToTokens for TypeArm {
+        fn to_tokens(&self, tokens: &mut TokenStream) {
+            tokens.append_all(&self.attrs);
+            self.typ.to_tokens(tokens);
             self.fat_arrow_token.to_tokens(tokens);
             self.body.to_tokens(tokens);
             self.comma.to_tokens(tokens);

@@ -91,6 +91,98 @@ ast_enum_of_structs! {
     }
 }
 
+ast_enum_of_structs! {
+    /// The possible types that a Rust value could have.
+    ///
+    /// *This type is available only if Syn is built with the `"derive"` or `"full"`
+    /// feature.*
+    ///
+    /// # Syntax tree enum
+    ///
+    /// This type is a [syntax tree enum].
+    ///
+    /// [syntax tree enum]: Expr#syntax-tree-enums
+    #[cfg_attr(doc_cfg, doc(cfg(any(feature = "full", feature = "derive"))))]
+    pub enum OrType {
+        /// A fixed size array type: `[T; n]`.
+        Array(TypeArray),
+
+        /// A bare function type: `fn(usize) -> bool`.
+        BareFn(TypeBareFn),
+
+        /// A type contained within invisible delimiters.
+        Group(TypeGroup),
+
+        /// An `impl Bound1 + Bound2 + Bound3` type where `Bound` is a trait or
+        /// a lifetime.
+        ImplTrait(TypeImplTrait),
+
+        /// Indication that a type should be inferred by the compiler: `_`.
+        Infer(TypeInfer),
+
+        /// A macro in the type position.
+        Macro(TypeMacro),
+
+        /// The never type: `!`.
+        Never(TypeNever),
+
+        /// Ored types: `String | &str`
+        Or(TypeOr),
+
+        /// A parenthesized type equivalent to the inner type.
+        Paren(TypeParen),
+
+        /// A path like `std::slice::Iter`, optionally qualified with a
+        /// self-type as in `<Vec<T> as SomeTrait>::Associated`.
+        Path(TypePath),
+
+        /// A raw pointer type: `*const T` or `*mut T`.
+        Ptr(TypePtr),
+
+        /// A reference type: `&'a T` or `&'a mut T`.
+        Reference(TypeReference),
+
+        /// A dynamically sized slice type: `[T]`.
+        Slice(TypeSlice),
+
+        /// A trait object type `Bound1 + Bound2 + Bound3` where `Bound` is a
+        /// trait or a lifetime.
+        TraitObject(TypeTraitObject),
+
+        /// A tuple type: `(A, B, C, String)`.
+        Tuple(TypeTuple),
+
+        /// Tokens in type position not interpreted by Syn.
+        Verbatim(TokenStream),
+
+        // The following is the only supported idiom for exhaustive matching of
+        // this enum.
+        //
+        //     match expr {
+        //         Type::Array(e) => {...}
+        //         Type::BareFn(e) => {...}
+        //         ...
+        //         Type::Verbatim(e) => {...}
+        //
+        //         #[cfg(test)]
+        //         Type::__TestExhaustive(_) => unimplemented!(),
+        //         #[cfg(not(test))]
+        //         _ => { /* some sane fallback */ }
+        //     }
+        //
+        // This way we fail your tests but don't break your library when adding
+        // a variant. You will be notified by a test failure when a variant is
+        // added, so that you can add code to handle it, but your library will
+        // continue to compile and work for downstream users in the interim.
+        //
+        // Once `deny(reachable)` is available in rustc, Type will be
+        // reimplemented as a non_exhaustive enum.
+        // https://github.com/rust-lang/rust/issues/44109#issuecomment-521781237
+        #[doc(hidden)]
+        __TestExhaustive(crate::private),
+    }
+}
+
 ast_struct! {
     /// A fixed size array type: `[T; n]`.
     ///
@@ -178,6 +270,19 @@ ast_struct! {
     #[cfg_attr(doc_cfg, doc(cfg(any(feature = "full", feature = "derive"))))]
     pub struct TypeNever {
         pub bang_token: Token![!],
+    }
+}
+
+ast_struct! {
+    /// The never type: `!`.
+    ///
+    /// *This type is available only if Syn is built with the `"derive"` or
+    /// `"full"` feature.*
+    #[cfg_attr(doc_cfg, doc(cfg(any(feature = "full", feature = "derive"))))]
+    pub struct TypeOr {
+        pub types: Punctuated<OrType, Token![|]>,
+        pub as_token: Option<Token![as]>,
+        pub bounds: Punctuated<TraitBound, Token![+]>,
     }
 }
 
@@ -1066,6 +1171,317 @@ pub mod parsing {
             }
         }
     }
+
+    impl Parse for OrType {
+        fn parse(input: ParseStream) -> Result<Self> {
+            let allow_plus = true;
+            let mut base = Some(ambig_ty_ored(input, allow_plus)?);
+            let mut rest = Punctuated::new();
+            while input.peek(Token![|]) {
+                if let Some(base) = base.take() {
+                    rest.push_value(base);
+                }
+                rest.push_punct(input.parse()?);
+                rest.push_value(ambig_ty_ored(input, allow_plus)?);
+            }
+            if let Some(base) = base {
+                Ok(base)
+            } else {
+                let mut as_token = None;
+                let mut bounds = Punctuated::new();
+                if input.peek(Token![as]) {
+                    as_token = Some(input.parse()?);
+                    loop {
+                        bounds.push_value(input.parse()?);
+                        if !input.peek(Token![+]) {
+                            break;
+                        }
+                        bounds.push_punct(input.parse()?);
+                    }
+                }
+                Ok(OrType::Or(TypeOr {
+                    types: rest,
+                    as_token,
+                    bounds,
+                }))
+            }
+        }
+    }
+
+    fn ambig_ty_ored(input: ParseStream, allow_plus: bool) -> Result<OrType> {
+        let begin = input.fork();
+
+        if input.peek(token::Group) {
+            let mut group: TypeGroup = input.parse()?;
+            if input.peek(Token![::]) && input.peek3(Ident::peek_any) {
+                if let Type::Path(mut ty) = *group.elem {
+                    Path::parse_rest(input, &mut ty.path, false)?;
+                    return Ok(OrType::Path(ty));
+                } else {
+                    return Ok(OrType::Path(TypePath {
+                        qself: Some(QSelf {
+                            lt_token: Token![<](group.group_token.span),
+                            position: 0,
+                            as_token: None,
+                            gt_token: Token![>](group.group_token.span),
+                            ty: group.elem,
+                        }),
+                        path: Path::parse_helper(input, false)?,
+                    }));
+                }
+            } else if input.peek(Token![<]) || input.peek(Token![::]) && input.peek3(Token![<]) {
+                if let Type::Path(mut ty) = *group.elem {
+                    let arguments = &mut ty.path.segments.last_mut().unwrap().arguments;
+                    if let PathArguments::None = arguments {
+                        *arguments = PathArguments::AngleBracketed(input.parse()?);
+                        Path::parse_rest(input, &mut ty.path, false)?;
+                        return Ok(OrType::Path(ty));
+                    } else {
+                        group.elem = Box::new(Type::Path(ty));
+                    }
+                }
+            }
+            return Ok(OrType::Group(group));
+        }
+
+        let mut lifetimes = None::<BoundLifetimes>;
+        let mut lookahead = input.lookahead1();
+        if lookahead.peek(Token![for]) {
+            lifetimes = input.parse()?;
+            lookahead = input.lookahead1();
+            if !lookahead.peek(Ident)
+                && !lookahead.peek(Token![fn])
+                && !lookahead.peek(Token![unsafe])
+                && !lookahead.peek(Token![extern])
+                && !lookahead.peek(Token![super])
+                && !lookahead.peek(Token![self])
+                && !lookahead.peek(Token![Self])
+                && !lookahead.peek(Token![crate])
+                || input.peek(Token![dyn])
+            {
+                return Err(lookahead.error());
+            }
+        }
+
+        if lookahead.peek(token::Paren) {
+            let content;
+            let paren_token = parenthesized!(content in input);
+            if content.is_empty() {
+                return Ok(OrType::Tuple(TypeTuple {
+                    paren_token,
+                    elems: Punctuated::new(),
+                }));
+            }
+            if content.peek(Lifetime) {
+                return Ok(OrType::Paren(TypeParen {
+                    paren_token,
+                    elem: Box::new(Type::TraitObject(content.parse()?)),
+                }));
+            }
+            if content.peek(Token![?]) {
+                return Ok(OrType::TraitObject(TypeTraitObject {
+                    dyn_token: None,
+                    bounds: {
+                        let mut bounds = Punctuated::new();
+                        bounds.push_value(TypeParamBound::Trait(TraitBound {
+                            paren_token: Some(paren_token),
+                            ..content.parse()?
+                        }));
+                        while let Some(plus) = input.parse()? {
+                            bounds.push_punct(plus);
+                            bounds.push_value(input.parse()?);
+                        }
+                        bounds
+                    },
+                }));
+            }
+            let mut first: Type = content.parse()?;
+            if content.peek(Token![,]) {
+                return Ok(OrType::Tuple(TypeTuple {
+                    paren_token,
+                    elems: {
+                        let mut elems = Punctuated::new();
+                        elems.push_value(first);
+                        elems.push_punct(content.parse()?);
+                        while !content.is_empty() {
+                            elems.push_value(content.parse()?);
+                            if content.is_empty() {
+                                break;
+                            }
+                            elems.push_punct(content.parse()?);
+                        }
+                        elems
+                    },
+                }));
+            }
+            if allow_plus && input.peek(Token![+]) {
+                loop {
+                    let first = match first {
+                        Type::Path(TypePath { qself: None, path }) => {
+                            TypeParamBound::Trait(TraitBound {
+                                paren_token: Some(paren_token),
+                                modifier: TraitBoundModifier::None,
+                                lifetimes: None,
+                                path,
+                            })
+                        }
+                        Type::TraitObject(TypeTraitObject {
+                            dyn_token: None,
+                            bounds,
+                        }) => {
+                            if bounds.len() > 1 || bounds.trailing_punct() {
+                                first = Type::TraitObject(TypeTraitObject {
+                                    dyn_token: None,
+                                    bounds,
+                                });
+                                break;
+                            }
+                            match bounds.into_iter().next().unwrap() {
+                                TypeParamBound::Trait(trait_bound) => {
+                                    TypeParamBound::Trait(TraitBound {
+                                        paren_token: Some(paren_token),
+                                        ..trait_bound
+                                    })
+                                }
+                                other @ TypeParamBound::Lifetime(_) => other,
+                            }
+                        }
+                        _ => break,
+                    };
+                    return Ok(OrType::TraitObject(TypeTraitObject {
+                        dyn_token: None,
+                        bounds: {
+                            let mut bounds = Punctuated::new();
+                            bounds.push_value(first);
+                            while let Some(plus) = input.parse()? {
+                                bounds.push_punct(plus);
+                                bounds.push_value(input.parse()?);
+                            }
+                            bounds
+                        },
+                    }));
+                }
+            }
+            Ok(OrType::Paren(TypeParen {
+                paren_token,
+                elem: Box::new(first),
+            }))
+        } else if lookahead.peek(Token![fn])
+            || lookahead.peek(Token![unsafe])
+            || lookahead.peek(Token![extern])
+        {
+            let allow_mut_self = true;
+            if let Some(mut bare_fn) = parse_bare_fn(input, allow_mut_self)? {
+                bare_fn.lifetimes = lifetimes;
+                Ok(OrType::BareFn(bare_fn))
+            } else {
+                Ok(OrType::Verbatim(verbatim::between(begin, input)))
+            }
+        } else if lookahead.peek(Ident)
+            || input.peek(Token![super])
+            || input.peek(Token![self])
+            || input.peek(Token![Self])
+            || input.peek(Token![crate])
+            || lookahead.peek(Token![::])
+            || lookahead.peek(Token![<])
+        {
+            if input.peek(Token![dyn]) {
+                let trait_object = TypeTraitObject::parse(input, allow_plus)?;
+                return Ok(OrType::TraitObject(trait_object));
+            }
+
+            let ty: TypePath = input.parse()?;
+            if ty.qself.is_some() {
+                return Ok(OrType::Path(ty));
+            }
+
+            if input.peek(Token![!]) && !input.peek(Token![!=]) {
+                let mut contains_arguments = false;
+                for segment in &ty.path.segments {
+                    match segment.arguments {
+                        PathArguments::None => {}
+                        PathArguments::AngleBracketed(_) | PathArguments::Parenthesized(_) => {
+                            contains_arguments = true;
+                        }
+                    }
+                }
+
+                if !contains_arguments {
+                    let bang_token: Token![!] = input.parse()?;
+                    let (delimiter, tokens) = mac::parse_delimiter(input)?;
+                    return Ok(OrType::Macro(TypeMacro {
+                        mac: Macro {
+                            path: ty.path,
+                            bang_token,
+                            delimiter,
+                            tokens,
+                        },
+                    }));
+                }
+            }
+
+            if lifetimes.is_some() || allow_plus && input.peek(Token![+]) {
+                let mut bounds = Punctuated::new();
+                bounds.push_value(TypeParamBound::Trait(TraitBound {
+                    paren_token: None,
+                    modifier: TraitBoundModifier::None,
+                    lifetimes,
+                    path: ty.path,
+                }));
+                if allow_plus {
+                    while input.peek(Token![+]) {
+                        bounds.push_punct(input.parse()?);
+                        if !(input.peek(Ident::peek_any)
+                            || input.peek(Token![::])
+                            || input.peek(Token![?])
+                            || input.peek(Lifetime)
+                            || input.peek(token::Paren))
+                        {
+                            break;
+                        }
+                        bounds.push_value(input.parse()?);
+                    }
+                }
+                return Ok(OrType::TraitObject(TypeTraitObject {
+                    dyn_token: None,
+                    bounds,
+                }));
+            }
+
+            Ok(OrType::Path(ty))
+        } else if lookahead.peek(token::Bracket) {
+            let content;
+            let bracket_token = bracketed!(content in input);
+            let elem: Type = content.parse()?;
+            if content.peek(Token![;]) {
+                Ok(OrType::Array(TypeArray {
+                    bracket_token,
+                    elem: Box::new(elem),
+                    semi_token: content.parse()?,
+                    len: content.parse()?,
+                }))
+            } else {
+                Ok(OrType::Slice(TypeSlice {
+                    bracket_token,
+                    elem: Box::new(elem),
+                }))
+            }
+        } else if lookahead.peek(Token![*]) {
+            input.parse().map(OrType::Ptr)
+        } else if lookahead.peek(Token![&]) {
+            input.parse().map(OrType::Reference)
+        } else if lookahead.peek(Token![!]) && !input.peek(Token![=]) {
+            input.parse().map(OrType::Never)
+        } else if lookahead.peek(Token![impl]) {
+            TypeImplTrait::parse(input, allow_plus).map(OrType::ImplTrait)
+        } else if lookahead.peek(Token![_]) {
+            input.parse().map(OrType::Infer)
+        } else if lookahead.peek(Lifetime) {
+            input.parse().map(OrType::TraitObject)
+        } else {
+            Err(lookahead.error())
+        }
+    }
 }
 
 #[cfg(feature = "printing")]
@@ -1145,6 +1561,15 @@ mod printing {
     impl ToTokens for TypeNever {
         fn to_tokens(&self, tokens: &mut TokenStream) {
             self.bang_token.to_tokens(tokens);
+        }
+    }
+
+    #[cfg_attr(doc_cfg, doc(cfg(feature = "printing")))]
+    impl ToTokens for TypeOr {
+        fn to_tokens(&self, tokens: &mut TokenStream) {
+            self.types.to_tokens(tokens);
+            self.as_token.to_tokens(tokens);
+            self.bounds.to_tokens(tokens);
         }
     }
 

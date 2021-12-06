@@ -346,15 +346,16 @@ pub use crate::data::{
 mod expr;
 #[cfg(feature = "full")]
 pub use crate::expr::{
-    Arm, FieldValue, GenericMethodArgument, Label, MethodTurbofish, RangeLimits,
+    Arm, FieldValue, GenericMethodArgument, Label, MethodTurbofish, RangeLimits, TypeArm,
 };
 #[cfg(any(feature = "full", feature = "derive"))]
 pub use crate::expr::{
     Expr, ExprArray, ExprAssign, ExprAssignOp, ExprAsync, ExprAwait, ExprBinary, ExprBlock,
     ExprBox, ExprBreak, ExprCall, ExprCast, ExprClosure, ExprContinue, ExprField, ExprForLoop,
-    ExprGroup, ExprIf, ExprIndex, ExprLet, ExprLit, ExprLoop, ExprMacro, ExprMatch, ExprMethodCall,
-    ExprParen, ExprPath, ExprRange, ExprReference, ExprRepeat, ExprReturn, ExprStruct, ExprTry,
-    ExprTryBlock, ExprTuple, ExprType, ExprUnary, ExprUnsafe, ExprWhile, ExprYield, Index, Member,
+    ExprGroup, ExprIf, ExprIndex, ExprLet, ExprLit, ExprLoop, ExprMacro, ExprMatch, ExprMatchType,
+    ExprMethodCall, ExprParen, ExprPath, ExprRange, ExprReference, ExprRepeat, ExprReturn,
+    ExprStruct, ExprTry, ExprTryBlock, ExprTuple, ExprType, ExprUnary, ExprUnsafe, ExprWhile,
+    ExprYield, Index, Member,
 };
 
 #[cfg(any(feature = "full", feature = "derive"))]
@@ -372,12 +373,12 @@ pub use crate::generics::{ImplGenerics, Turbofish, TypeGenerics};
 mod item;
 #[cfg(feature = "full")]
 pub use crate::item::{
-    FnArg, ForeignItem, ForeignItemFn, ForeignItemMacro, ForeignItemStatic, ForeignItemType,
-    ImplItem, ImplItemConst, ImplItemMacro, ImplItemMethod, ImplItemType, Item, ItemConst,
-    ItemEnum, ItemExternCrate, ItemFn, ItemForeignMod, ItemImpl, ItemMacro, ItemMacro2, ItemMod,
-    ItemStatic, ItemStruct, ItemTrait, ItemTraitAlias, ItemType, ItemUnion, ItemUse, Receiver,
-    Signature, TraitItem, TraitItemConst, TraitItemMacro, TraitItemMethod, TraitItemType, UseGlob,
-    UseGroup, UseName, UsePath, UseRename, UseTree,
+    FnArg, FnArgOr, ForeignItem, ForeignItemFn, ForeignItemMacro, ForeignItemStatic,
+    ForeignItemType, ImplItem, ImplItemConst, ImplItemMacro, ImplItemMethod, ImplItemType, Item,
+    ItemConst, ItemEnum, ItemExternCrate, ItemFn, ItemFnOr, ItemForeignMod, ItemImpl, ItemMacro,
+    ItemMacro2, ItemMod, ItemStatic, ItemStruct, ItemTrait, ItemTraitAlias, ItemType, ItemUnion,
+    ItemUse, Receiver, Signature, TraitItem, TraitItemConst, TraitItemMacro, TraitItemMethod,
+    TraitItemType, UseGlob, UseGroup, UseName, UsePath, UseRename, UseTree,
 };
 
 #[cfg(feature = "full")]
@@ -417,9 +418,9 @@ pub use crate::stmt::{Block, Local, Stmt};
 mod ty;
 #[cfg(any(feature = "full", feature = "derive"))]
 pub use crate::ty::{
-    Abi, BareFnArg, ReturnType, Type, TypeArray, TypeBareFn, TypeGroup, TypeImplTrait, TypeInfer,
-    TypeMacro, TypeNever, TypeParen, TypePath, TypePtr, TypeReference, TypeSlice, TypeTraitObject,
-    TypeTuple, Variadic,
+    Abi, BareFnArg, OrType, ReturnType, Type, TypeArray, TypeBareFn, TypeGroup, TypeImplTrait,
+    TypeInfer, TypeMacro, TypeNever, TypeParen, TypePath, TypePtr, TypeReference, TypeSlice,
+    TypeTraitObject, TypeTuple, Variadic,
 };
 
 #[cfg(feature = "full")]
@@ -427,7 +428,7 @@ mod pat;
 #[cfg(feature = "full")]
 pub use crate::pat::{
     FieldPat, Pat, PatBox, PatIdent, PatLit, PatMacro, PatOr, PatPath, PatRange, PatReference,
-    PatRest, PatSlice, PatStruct, PatTuple, PatTupleStruct, PatType, PatWild,
+    PatRest, PatSlice, PatStruct, PatTuple, PatTupleStruct, PatType, PatTypeOr, PatWild,
 };
 
 #[cfg(any(feature = "full", feature = "derive"))]

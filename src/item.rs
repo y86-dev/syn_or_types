@@ -1,5 +1,6 @@
 use super::*;
 use crate::derive::{Data, DataEnum, DataStruct, DataUnion, DeriveInput};
+use crate::pat::PatTypeOr;
 use crate::punctuated::Punctuated;
 use proc_macro2::TokenStream;
 
@@ -30,6 +31,10 @@ ast_enum_of_structs! {
         /// A free-standing function: `fn process(n: usize) -> Result<()> { ...
         /// }`.
         Fn(ItemFn),
+
+        /// A free-standing function with OrType as possible parameters: `fn process(n: usize | u32) -> Result<()> { ...
+        /// }`.
+        FnOr(ItemFnOr),
 
         /// A block of foreign items: `extern "C" { ... }`.
         ForeignMod(ItemForeignMod),
@@ -159,6 +164,20 @@ ast_struct! {
         pub attrs: Vec<Attribute>,
         pub vis: Visibility,
         pub sig: Signature,
+        pub block: Box<Block>,
+    }
+}
+
+ast_struct! {
+    /// A free-standing function: `fn process(n: usize) -> Result<()> { ...
+    /// }`.
+    ///
+    /// *This type is available only if Syn is built with the `"full"` feature.*
+    #[cfg_attr(doc_cfg, doc(cfg(feature = "full")))]
+    pub struct ItemFnOr {
+        pub attrs: Vec<Attribute>,
+        pub vis: Visibility,
+        pub sig: SignatureOr,
         pub block: Box<Block>,
     }
 }
@@ -934,6 +953,45 @@ impl Signature {
     }
 }
 
+ast_struct! {
+    /// A function signature in a trait or implementation: `unsafe fn
+    /// initialize(&self)`.
+    ///
+    /// *This type is available only if Syn is built with the `"full"` feature.*
+    #[cfg_attr(doc_cfg, doc(cfg(feature = "full")))]
+    pub struct SignatureOr {
+        pub constness: Option<Token![const]>,
+        pub asyncness: Option<Token![async]>,
+        pub unsafety: Option<Token![unsafe]>,
+        pub abi: Option<Abi>,
+        pub fn_token: Token![fn],
+        pub ident: Ident,
+        pub generics: Generics,
+        pub paren_token: token::Paren,
+        pub inputs: Punctuated<FnArgOr, Token![,]>,
+        pub variadic: Option<Variadic>,
+        pub output: ReturnType,
+    }
+}
+
+impl SignatureOr {
+    /// A method's `self` receiver, such as `&self` or `self: Box<Self>`.
+    pub fn receiver(&self) -> Option<&FnArgOr> {
+        let arg = self.inputs.first()?;
+        match arg {
+            FnArgOr::Receiver(_) => Some(arg),
+            FnArgOr::Typed(PatTypeOr { pat, .. }) => {
+                if let Pat::Ident(PatIdent { ident, .. }) = &**pat {
+                    if ident == "self" {
+                        return Some(arg);
+                    }
+                }
+                None
+            }
+        }
+    }
+}
+
 ast_enum_of_structs! {
     /// An argument in a function signature: the `n: usize` in `fn f(n: usize)`.
     ///
@@ -949,6 +1007,24 @@ ast_enum_of_structs! {
 
         /// A function argument accepted by pattern and type.
         Typed(PatType),
+    }
+}
+
+ast_enum_of_structs! {
+    /// An argument in a function signature: the `n: usize` in `fn f(n: usize)`.
+    ///
+    /// *This type is available only if Syn is built with the `"full"` feature.*
+    #[cfg_attr(doc_cfg, doc(cfg(feature = "full")))]
+    pub enum FnArgOr {
+        /// The `self` argument of an associated method, whether taken by value
+        /// or by reference.
+        ///
+        /// Note that `self` receivers with a specified type, such as `self:
+        /// Box<Self>`, are parsed as a `FnArgOr::Typed`.
+        Receiver(Receiver),
+
+        /// A function argument accepted by pattern and type.
+        Typed(PatTypeOr),
     }
 }
 
@@ -982,6 +1058,7 @@ pub mod parsing {
     use crate::parse::discouraged::Speculative;
     use crate::parse::{Parse, ParseBuffer, ParseStream, Result};
     use crate::token::Brace;
+    use crate::ty::OrType;
     use proc_macro2::{Delimiter, Group, Punct, Spacing, TokenTree};
     use std::iter::{self, FromIterator};
 
@@ -1454,6 +1531,34 @@ pub mod parsing {
         Some(variadic)
     }
 
+    fn pop_variadic_or(args: &mut Punctuated<FnArgOr, Token![,]>) -> Option<Variadic> {
+        let trailing_punct = args.trailing_punct();
+
+        let last = match args.last_mut()? {
+            FnArgOr::Typed(last) => last,
+            _ => return None,
+        };
+
+        let ty = match last.ty.as_ref() {
+            OrType::Verbatim(ty) => ty,
+            _ => return None,
+        };
+
+        let mut variadic = Variadic {
+            attrs: Vec::new(),
+            dots: parse2(ty.clone()).ok()?,
+        };
+
+        if let Pat::Verbatim(pat) = last.pat.as_ref() {
+            if pat.to_string() == "..." && !trailing_punct {
+                variadic.attrs = mem::replace(&mut last.attrs, Vec::new());
+                args.pop();
+            }
+        }
+
+        Some(variadic)
+    }
+
     fn variadic_to_tokens(dots: &Token![...]) -> TokenStream {
         TokenStream::from_iter(vec![
             TokenTree::Punct({
@@ -1519,6 +1624,41 @@ pub mod parsing {
     }
 
     #[cfg_attr(doc_cfg, doc(cfg(feature = "parsing")))]
+    impl Parse for SignatureOr {
+        fn parse(input: ParseStream) -> Result<Self> {
+            let constness: Option<Token![const]> = input.parse()?;
+            let asyncness: Option<Token![async]> = input.parse()?;
+            let unsafety: Option<Token![unsafe]> = input.parse()?;
+            let abi: Option<Abi> = input.parse()?;
+            let fn_token: Token![fn] = input.parse()?;
+            let ident: Ident = input.parse()?;
+            let mut generics: Generics = input.parse()?;
+
+            let content;
+            let paren_token = parenthesized!(content in input);
+            let mut inputs = parse_fn_args_or(&content)?;
+            let variadic = pop_variadic_or(&mut inputs);
+
+            let output: ReturnType = input.parse()?;
+            generics.where_clause = input.parse()?;
+
+            Ok(SignatureOr {
+                constness,
+                asyncness,
+                unsafety,
+                abi,
+                fn_token,
+                ident,
+                generics,
+                paren_token,
+                inputs,
+                variadic,
+                output,
+            })
+        }
+    }
+
+    #[cfg_attr(doc_cfg, doc(cfg(feature = "parsing")))]
     impl Parse for ItemFn {
         fn parse(input: ParseStream) -> Result<Self> {
             let outer_attrs = input.call(Attribute::parse_outer)?;
@@ -1548,6 +1688,35 @@ pub mod parsing {
     }
 
     #[cfg_attr(doc_cfg, doc(cfg(feature = "parsing")))]
+    impl Parse for ItemFnOr {
+        fn parse(input: ParseStream) -> Result<Self> {
+            let outer_attrs = input.call(Attribute::parse_outer)?;
+            let vis: Visibility = input.parse()?;
+            let sig: SignatureOr = input.parse()?;
+            parse_rest_of_fn_or(input, outer_attrs, vis, sig)
+        }
+    }
+
+    fn parse_rest_of_fn_or(
+        input: ParseStream,
+        mut attrs: Vec<Attribute>,
+        vis: Visibility,
+        sig: SignatureOr,
+    ) -> Result<ItemFnOr> {
+        let content;
+        let brace_token = braced!(content in input);
+        attr::parsing::parse_inner(&content, &mut attrs)?;
+        let stmts = content.call(Block::parse_within)?;
+
+        Ok(ItemFnOr {
+            attrs,
+            vis,
+            sig,
+            block: Box::new(Block { brace_token, stmts }),
+        })
+    }
+
+    #[cfg_attr(doc_cfg, doc(cfg(feature = "parsing")))]
     impl Parse for FnArg {
         fn parse(input: ParseStream) -> Result<Self> {
             let attrs = input.call(Attribute::parse_outer)?;
@@ -1564,6 +1733,26 @@ pub mod parsing {
             let mut typed = input.call(fn_arg_typed)?;
             typed.attrs = attrs;
             Ok(FnArg::Typed(typed))
+        }
+    }
+
+    #[cfg_attr(doc_cfg, doc(cfg(feature = "parsing")))]
+    impl Parse for FnArgOr {
+        fn parse(input: ParseStream) -> Result<Self> {
+            let attrs = input.call(Attribute::parse_outer)?;
+
+            let ahead = input.fork();
+            if let Ok(mut receiver) = ahead.parse::<Receiver>() {
+                if !ahead.peek(Token![:]) {
+                    input.advance_to(&ahead);
+                    receiver.attrs = attrs;
+                    return Ok(FnArgOr::Receiver(receiver));
+                }
+            }
+
+            let mut typed = input.call(fn_arg_typed_or)?;
+            typed.attrs = attrs;
+            Ok(FnArgOr::Typed(typed))
         }
     }
 
@@ -1633,6 +1822,84 @@ pub mod parsing {
         }
 
         Ok(args)
+    }
+
+    fn parse_fn_args_or(input: ParseStream) -> Result<Punctuated<FnArgOr, Token![,]>> {
+        let mut args = Punctuated::new();
+        let mut has_receiver = false;
+
+        while !input.is_empty() {
+            let attrs = input.call(Attribute::parse_outer)?;
+
+            let arg = if let Some(dots) = input.parse::<Option<Token![...]>>()? {
+                FnArgOr::Typed(PatTypeOr {
+                    attrs,
+                    pat: Box::new(Pat::Verbatim(variadic_to_tokens(&dots))),
+                    colon_token: Token![:](dots.spans[0]),
+                    ty: Box::new(OrType::Verbatim(variadic_to_tokens(&dots))),
+                })
+            } else {
+                let mut arg: FnArgOr = input.parse()?;
+                match &mut arg {
+                    FnArgOr::Receiver(receiver) if has_receiver => {
+                        return Err(Error::new(
+                            receiver.self_token.span,
+                            "unexpected second method receiver",
+                        ));
+                    }
+                    FnArgOr::Receiver(receiver) if !args.is_empty() => {
+                        return Err(Error::new(
+                            receiver.self_token.span,
+                            "unexpected method receiver",
+                        ));
+                    }
+                    FnArgOr::Receiver(receiver) => {
+                        has_receiver = true;
+                        receiver.attrs = attrs;
+                    }
+                    FnArgOr::Typed(arg) => arg.attrs = attrs,
+                }
+                arg
+            };
+            args.push_value(arg);
+
+            if input.is_empty() {
+                break;
+            }
+
+            let comma: Token![,] = input.parse()?;
+            args.push_punct(comma);
+        }
+
+        Ok(args)
+    }
+
+    fn fn_arg_typed_or(input: ParseStream) -> Result<PatTypeOr> {
+        // Hack to parse pre-2018 syntax in
+        // test/ui/rfc-2565-param-attrs/param-attrs-pretty.rs
+        // because the rest of the test case is valuable.
+        if input.peek(Ident) && input.peek2(Token![<]) {
+            let span = input.fork().parse::<Ident>()?.span();
+            return Ok(PatTypeOr {
+                attrs: Vec::new(),
+                pat: Box::new(Pat::Wild(PatWild {
+                    attrs: Vec::new(),
+                    underscore_token: Token![_](span),
+                })),
+                colon_token: Token![:](span),
+                ty: input.parse()?,
+            });
+        }
+
+        Ok(PatTypeOr {
+            attrs: Vec::new(),
+            pat: Box::new(pat::parsing::multi_pat(input)?),
+            colon_token: input.parse()?,
+            ty: Box::new(match input.parse::<Option<Token![...]>>()? {
+                Some(dot3) => OrType::Verbatim(variadic_to_tokens(&dot3)),
+                None => input.parse()?,
+            }),
+        })
     }
 
     fn fn_arg_typed(input: ParseStream) -> Result<PatType> {
@@ -2753,6 +3020,7 @@ mod printing {
     use crate::attr::FilterAttrs;
     use crate::print::TokensOrDefault;
     use crate::punctuated::Pair;
+    use crate::ty::OrType;
     use proc_macro2::TokenStream;
     use quote::{ToTokens, TokenStreamExt};
 
@@ -2817,6 +3085,19 @@ mod printing {
 
     #[cfg_attr(doc_cfg, doc(cfg(feature = "printing")))]
     impl ToTokens for ItemFn {
+        fn to_tokens(&self, tokens: &mut TokenStream) {
+            tokens.append_all(self.attrs.outer());
+            self.vis.to_tokens(tokens);
+            self.sig.to_tokens(tokens);
+            self.block.brace_token.surround(tokens, |tokens| {
+                tokens.append_all(self.attrs.inner());
+                tokens.append_all(&self.block.stmts);
+            });
+        }
+    }
+
+    #[cfg_attr(doc_cfg, doc(cfg(feature = "printing")))]
+    impl ToTokens for ItemFnOr {
         fn to_tokens(&self, tokens: &mut TokenStream) {
             tokens.append_all(self.attrs.outer());
             self.vis.to_tokens(tokens);
@@ -3258,6 +3539,33 @@ mod printing {
         }
     }
 
+    fn maybe_variadic_to_tokens_or(arg: &FnArgOr, tokens: &mut TokenStream) -> bool {
+        let arg = match arg {
+            FnArgOr::Typed(arg) => arg,
+            FnArgOr::Receiver(receiver) => {
+                receiver.to_tokens(tokens);
+                return false;
+            }
+        };
+
+        match arg.ty.as_ref() {
+            OrType::Verbatim(ty) if ty.to_string() == "..." => {
+                match arg.pat.as_ref() {
+                    Pat::Verbatim(pat) if pat.to_string() == "..." => {
+                        tokens.append_all(arg.attrs.outer());
+                        pat.to_tokens(tokens);
+                    }
+                    _ => arg.to_tokens(tokens),
+                }
+                true
+            }
+            _ => {
+                arg.to_tokens(tokens);
+                false
+            }
+        }
+    }
+
     #[cfg_attr(doc_cfg, doc(cfg(feature = "printing")))]
     impl ToTokens for Signature {
         fn to_tokens(&self, tokens: &mut TokenStream) {
@@ -3278,6 +3586,41 @@ mod printing {
                         }
                         Pair::End(input) => {
                             last_is_variadic = maybe_variadic_to_tokens(input, tokens);
+                        }
+                    }
+                }
+                if self.variadic.is_some() && !last_is_variadic {
+                    if !self.inputs.empty_or_trailing() {
+                        <Token![,]>::default().to_tokens(tokens);
+                    }
+                    self.variadic.to_tokens(tokens);
+                }
+            });
+            self.output.to_tokens(tokens);
+            self.generics.where_clause.to_tokens(tokens);
+        }
+    }
+
+    #[cfg_attr(doc_cfg, doc(cfg(feature = "printing")))]
+    impl ToTokens for SignatureOr {
+        fn to_tokens(&self, tokens: &mut TokenStream) {
+            self.constness.to_tokens(tokens);
+            self.asyncness.to_tokens(tokens);
+            self.unsafety.to_tokens(tokens);
+            self.abi.to_tokens(tokens);
+            self.fn_token.to_tokens(tokens);
+            self.ident.to_tokens(tokens);
+            self.generics.to_tokens(tokens);
+            self.paren_token.surround(tokens, |tokens| {
+                let mut last_is_variadic = false;
+                for input in self.inputs.pairs() {
+                    match input {
+                        Pair::Punctuated(input, comma) => {
+                            maybe_variadic_to_tokens_or(input, tokens);
+                            comma.to_tokens(tokens);
+                        }
+                        Pair::End(input) => {
+                            last_is_variadic = maybe_variadic_to_tokens_or(input, tokens);
                         }
                     }
                 }

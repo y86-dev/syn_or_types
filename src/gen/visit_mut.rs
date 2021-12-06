@@ -7,6 +7,11 @@ use crate::gen::helper::visit_mut::*;
 #[cfg(any(feature = "full", feature = "derive"))]
 use crate::punctuated::Punctuated;
 use crate::*;
+use crate::{
+    expr::{ExprMatchType, TypeArm},
+    ty::TypeOr,
+};
+
 use proc_macro2::Span;
 #[cfg(feature = "full")]
 macro_rules! full {
@@ -46,6 +51,10 @@ pub trait VisitMut {
     #[cfg(feature = "full")]
     fn visit_arm_mut(&mut self, i: &mut Arm) {
         visit_arm_mut(self, i);
+    }
+    #[cfg(feature = "full")]
+    fn visit_type_arm_mut(&mut self, i: &mut TypeArm) {
+        visit_type_arm_mut(self, i);
     }
     #[cfg(any(feature = "derive", feature = "full"))]
     fn visit_attr_style_mut(&mut self, i: &mut AttrStyle) {
@@ -198,6 +207,10 @@ pub trait VisitMut {
     #[cfg(feature = "full")]
     fn visit_expr_match_mut(&mut self, i: &mut ExprMatch) {
         visit_expr_match_mut(self, i);
+    }
+    #[cfg(feature = "full")]
+    fn visit_expr_match_type_mut(&mut self, i: &mut ExprMatchType) {
+        visit_expr_match_type_mut(self, i);
     }
     #[cfg(feature = "full")]
     fn visit_expr_method_call_mut(&mut self, i: &mut ExprMethodCall) {
@@ -645,6 +658,10 @@ pub trait VisitMut {
         visit_trait_item_type_mut(self, i);
     }
     #[cfg(any(feature = "derive", feature = "full"))]
+    fn visit_ortype_mut(&mut self, i: &mut OrType) {
+        visit_ortype_mut(self, i);
+    }
+    #[cfg(any(feature = "derive", feature = "full"))]
     fn visit_type_mut(&mut self, i: &mut Type) {
         visit_type_mut(self, i);
     }
@@ -675,6 +692,10 @@ pub trait VisitMut {
     #[cfg(any(feature = "derive", feature = "full"))]
     fn visit_type_never_mut(&mut self, i: &mut TypeNever) {
         visit_type_never_mut(self, i);
+    }
+    #[cfg(any(feature = "derive", feature = "full"))]
+    fn visit_type_or_mut(&mut self, i: &mut TypeOr) {
+        visit_type_or_mut(self, i);
     }
     #[cfg(any(feature = "derive", feature = "full"))]
     fn visit_type_param_mut(&mut self, i: &mut TypeParam) {
@@ -802,6 +823,21 @@ pub fn visit_angle_bracketed_generic_arguments_mut<V>(
         }
     }
     tokens_helper(v, &mut node.gt_token.spans);
+}
+#[cfg(feature = "full")]
+pub fn visit_type_arm_mut<V>(v: &mut V, node: &mut TypeArm)
+where
+    V: VisitMut + ?Sized,
+{
+    for it in &mut node.attrs {
+        v.visit_attribute_mut(it);
+    }
+    v.visit_ortype_mut(&mut node.typ);
+    tokens_helper(v, &mut node.fat_arrow_token.spans);
+    v.visit_expr_mut(&mut *node.body);
+    if let Some(it) = &mut node.comma {
+        tokens_helper(v, &mut it.spans);
+    };
 }
 #[cfg(feature = "full")]
 pub fn visit_arm_mut<V>(v: &mut V, node: &mut Arm)
@@ -1158,6 +1194,9 @@ where
         }
         Expr::Match(_binding_0) => {
             full!(v.visit_expr_match_mut(_binding_0));
+        }
+        Expr::MatchType(_binding_0) => {
+            full!(v.visit_expr_match_type_mut(_binding_0));
         }
         Expr::MethodCall(_binding_0) => {
             full!(v.visit_expr_method_call_mut(_binding_0));
@@ -1532,6 +1571,22 @@ where
     tokens_helper(v, &mut node.brace_token.span);
     for it in &mut node.arms {
         v.visit_arm_mut(it);
+    }
+}
+#[cfg(feature = "full")]
+pub fn visit_expr_match_type_mut<V>(v: &mut V, node: &mut ExprMatchType)
+where
+    V: VisitMut + ?Sized,
+{
+    for it in &mut node.attrs {
+        v.visit_attribute_mut(it);
+    }
+    tokens_helper(v, &mut node.match_token.span);
+    tokens_helper(v, &mut node.type_token.span);
+    v.visit_ident_mut(&mut *node.ident);
+    tokens_helper(v, &mut node.brace_token.span);
+    for it in &mut node.arms {
+        v.visit_type_arm_mut(it);
     }
 }
 #[cfg(feature = "full")]
@@ -3335,6 +3390,63 @@ where
     tokens_helper(v, &mut node.semi_token.spans);
 }
 #[cfg(any(feature = "derive", feature = "full"))]
+pub fn visit_ortype_mut<V>(v: &mut V, node: &mut OrType)
+where
+    V: VisitMut + ?Sized,
+{
+    match node {
+        OrType::Array(_binding_0) => {
+            v.visit_type_array_mut(_binding_0);
+        }
+        OrType::BareFn(_binding_0) => {
+            v.visit_type_bare_fn_mut(_binding_0);
+        }
+        OrType::Group(_binding_0) => {
+            v.visit_type_group_mut(_binding_0);
+        }
+        OrType::ImplTrait(_binding_0) => {
+            v.visit_type_impl_trait_mut(_binding_0);
+        }
+        OrType::Infer(_binding_0) => {
+            v.visit_type_infer_mut(_binding_0);
+        }
+        OrType::Macro(_binding_0) => {
+            v.visit_type_macro_mut(_binding_0);
+        }
+        OrType::Never(_binding_0) => {
+            v.visit_type_never_mut(_binding_0);
+        }
+        OrType::Or(_binding_0) => {
+            v.visit_type_or_mut(_binding_0);
+        }
+        OrType::Paren(_binding_0) => {
+            v.visit_type_paren_mut(_binding_0);
+        }
+        OrType::Path(_binding_0) => {
+            v.visit_type_path_mut(_binding_0);
+        }
+        OrType::Ptr(_binding_0) => {
+            v.visit_type_ptr_mut(_binding_0);
+        }
+        OrType::Reference(_binding_0) => {
+            v.visit_type_reference_mut(_binding_0);
+        }
+        OrType::Slice(_binding_0) => {
+            v.visit_type_slice_mut(_binding_0);
+        }
+        OrType::TraitObject(_binding_0) => {
+            v.visit_type_trait_object_mut(_binding_0);
+        }
+        OrType::Tuple(_binding_0) => {
+            v.visit_type_tuple_mut(_binding_0);
+        }
+        OrType::Verbatim(_binding_0) => {
+            skip!(_binding_0);
+        }
+        _ => unreachable!(),
+    }
+}
+#[cfg(any(feature = "derive", feature = "full"))]
 pub fn visit_type_mut<V>(v: &mut V, node: &mut Type)
 where
     V: VisitMut + ?Sized,
@@ -3468,6 +3580,29 @@ where
     V: VisitMut + ?Sized,
 {
     tokens_helper(v, &mut node.bang_token.spans);
+}
+#[cfg(any(feature = "derive", feature = "full"))]
+pub fn visit_type_or_mut<V>(v: &mut V, node: &mut TypeOr)
+where
+    V: VisitMut + ?Sized,
+{
+    for el in Punctuated::pairs_mut(&mut node.types) {
+        let (it, p) = el.into_tuple();
+        v.visit_ortype_mut(it);
+        if let Some(p) = p {
+            tokens_helper(v, &mut p.spans);
+        }
+    }
+    if let Some(p) = node.as_token.as_mut() {
+        tokens_helper(v, &mut p.span);
+        for el in Punctuated::pairs_mut(&mut node.bounds) {
+            let (it, p) = el.into_tuple();
+            v.visit_trait_bound_mut(it);
+            if let Some(p) = p {
+                tokens_helper(v, &mut p.spans);
+            }
+        }
+    }
 }
 #[cfg(any(feature = "derive", feature = "full"))]
 pub fn visit_type_param_mut<V>(v: &mut V, node: &mut TypeParam)
